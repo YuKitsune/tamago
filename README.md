@@ -7,7 +7,7 @@
 <h3 align="center">
   A lightweight pomodoro-style timer.
 
-[![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/yukitsune/tamago/ci.yml)](https://github.com/YuKitsune/tamago/actions/workflows/ci.yml)
+[![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/yukitsune/tamago/go.yml)](https://github.com/YuKitsune/tamago/actions/workflows/go.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/yukitsune/tamago)](https://goreportcard.com/report/github.com/yukitsune/tamago)
 [![PkgGoDev](https://pkg.go.dev/badge/mod/github.com/yukitsune/tamago)](https://pkg.go.dev/mod/github.com/yukitsune/tamago)
 </h3>
