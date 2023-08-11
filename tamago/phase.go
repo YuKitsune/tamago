@@ -30,6 +30,21 @@ func (t PhaseType) String() string {
 	panic(fmt.Sprintf("unexpected phase type: %d", t))
 }
 
+func (t PhaseType) Emoji() string {
+	switch t {
+	case WorkPhase:
+		return "💻"
+	case ShortBreakPhase:
+		return "☕️"
+	case LongBreakPhase:
+		return "🍔"
+	case Completed:
+		return "🎉"
+	}
+
+	return ""
+}
+
 type Phase struct {
 	PhaseType   PhaseType
 	PhaseNumber int

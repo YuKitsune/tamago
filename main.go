@@ -6,6 +6,7 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/timer"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/yukitsune/tamago/config"
@@ -15,7 +16,6 @@ import (
 )
 
 // Todo:
-//  - List of completed and upcoming phases (toggleable)
 //  - Dry-run: List phases, cycles, and local start/end times
 //  - Acknowledgement: Seek user acknowledgment when phase changes
 //  - Flash when phase changes
@@ -82,14 +82,15 @@ func configureFlags(cmd *cobra.Command) error {
 func run(_ *cobra.Command, _ []string) error {
 
 	cfg := config.NewViperConfig(viper.GetViper())
-	phase := tamago.InitialPhase()
+
+	phasePlan := tamago.BuildPlan(cfg)
 
 	m := &model{
-		cfg:          cfg,
-		currentPhase: phase,
-		timer:        timer.NewWithInterval(phase.Timeout(cfg), time.Second),
-		keymap:       newKeymap(),
-		help:         help.New(),
+		cfg:    cfg,
+		plan:   phasePlan,
+		timer:  timer.NewWithInterval(phasePlan.CurrentPhase().Timeout(cfg), time.Second),
+		keymap: newKeymap(),
+		help:   help.New(),
 	}
 
 	m.keymap.resume.SetEnabled(false)
@@ -100,20 +101,21 @@ func run(_ *cobra.Command, _ []string) error {
 
 type model struct {
 	cfg          config.Config
-	currentPhase *tamago.Phase
+	plan         *tamago.PhasePlan
 	timer        timer.Model
 	keymap       keymap
 	help         help.Model
 	quitting     bool
+	showProgress bool
 }
 
 func (m *model) AdvancePhase() *tamago.Phase {
-	m.currentPhase = tamago.NextPhase(m.currentPhase, m.cfg)
-	if m.currentPhase.PhaseType == tamago.Completed {
+	nextPhase := m.plan.AdvancePhase()
+	if nextPhase.PhaseType == tamago.Completed {
 		m.quitting = true
 	}
-	m.timer.Timeout = m.currentPhase.Timeout(m.cfg)
-	return m.currentPhase
+	m.timer.Timeout = nextPhase.Timeout(m.cfg)
+	return nextPhase
 }
 
 func (m *model) Init() tea.Cmd {
@@ -135,7 +137,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case timer.TimeoutMsg:
-		if m.currentPhase.PhaseType == tamago.Completed {
+		if m.plan.CurrentPhase().PhaseType == tamago.Completed {
 			return m, tea.Quit
 		}
 
@@ -148,8 +150,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch {
 		case key.Matches(msg, m.keymap.pause, m.keymap.resume):
 			return m, m.timer.Toggle()
+		case key.Matches(msg, m.keymap.progress):
+			m.showProgress = !m.showProgress
+			return m, nil
 		case key.Matches(msg, m.keymap.reset):
-			m.timer.Timeout = m.currentPhase.Timeout(m.cfg)
+			m.timer.Timeout = m.plan.CurrentPhase().Timeout(m.cfg)
 		case key.Matches(msg, m.keymap.skip):
 			nextPhase := m.AdvancePhase()
 			if nextPhase.PhaseType == tamago.Completed {
@@ -166,20 +171,14 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *model) helpView() string {
-	return "\n" + m.help.ShortHelpView([]key.Binding{
-		m.keymap.pause,
-		m.keymap.resume,
-		m.keymap.reset,
-		m.keymap.skip,
-		m.keymap.quit,
-	})
-}
-
 func (m *model) View() string {
 
-	s := fmt.Sprintf("%s %s: %s", emojiFor(m.currentPhase.PhaseType), m.currentPhase.PhaseType.String(), m.timer.Timeout)
+	// Current phase and time remaining
+	currentPhase := m.plan.CurrentPhase()
+	phaseType := currentPhase.PhaseType
+	s := fmt.Sprintf("%s %s: %s", phaseType.Emoji(), phaseType.String(), m.timer.Timeout)
 
+	// Paused indicator
 	if !m.timer.Running() {
 		s += " (Paused)"
 	}
@@ -187,38 +186,85 @@ func (m *model) View() string {
 	if m.timer.Timedout() {
 		// Todo: Summary with supportive message <3
 		s = "All done!"
-	} else {
-		s += "\n"
 	}
 
+	// Progress section
+	if m.showProgress {
+		s += "\n"
+		s += m.progressView()
+	}
+
+	// Help section
 	if !m.quitting {
+		s += "\n"
 		s += m.helpView()
 	}
 
 	return s
 }
 
-func emojiFor(phaseType tamago.PhaseType) string {
-	switch phaseType {
-	case tamago.WorkPhase:
-		return "💻"
-	case tamago.ShortBreakPhase:
-		return "☕️"
-	case tamago.LongBreakPhase:
-		return "🍔"
-	case tamago.Completed:
-		return "🎉"
+func (m *model) progressView() string {
+	list := lipgloss.NewStyle().MarginRight(2)
+
+	checkMark := lipgloss.NewStyle().SetString("✓").
+		Foreground(lipgloss.Color("46")).
+		PaddingRight(1).
+		String()
+
+	dot := lipgloss.NewStyle().SetString("·").
+		PaddingRight(1).
+		String()
+
+	var phaseStrings []string
+
+	// Header
+	phaseStrings = append(phaseStrings, lipgloss.NewStyle().
+		Bold(true).
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderBottom(true).
+		MarginRight(2).
+		Render("Phases"))
+	for i, phase := range m.plan.Phases {
+		phaseType := phase.Phase.PhaseType.String()
+		if phase.Completed {
+			phaseStrings = append(phaseStrings, checkMark+lipgloss.NewStyle().
+				Strikethrough(true).
+				Foreground(lipgloss.Color("8")).
+				Render(phaseType))
+		} else if i == 0 || m.plan.Phases[i-1].Completed {
+			phaseStrings = append(phaseStrings, dot+phaseType)
+		} else {
+			phaseStrings = append(phaseStrings, lipgloss.NewStyle().
+				PaddingLeft(2).
+				Render(phaseType))
+		}
 	}
 
-	return ""
+	return list.Render(
+		lipgloss.JoinVertical(lipgloss.Left,
+			phaseStrings...,
+		),
+	)
+}
+
+func (m *model) helpView() string {
+	return "\n" + m.help.ShortHelpView([]key.Binding{
+		m.keymap.pause,
+		m.keymap.resume,
+		m.keymap.progress,
+		m.keymap.reset,
+		m.keymap.skip,
+		m.keymap.quit,
+	})
 }
 
 type keymap struct {
-	pause  key.Binding
-	resume key.Binding
-	reset  key.Binding
-	skip   key.Binding
-	quit   key.Binding
+	pause    key.Binding
+	resume   key.Binding
+	progress key.Binding
+	reset    key.Binding
+	skip     key.Binding
+	quit     key.Binding
 }
 
 func newKeymap() keymap {
@@ -228,8 +274,12 @@ func newKeymap() keymap {
 			key.WithHelp("p", "pause"),
 		),
 		resume: key.NewBinding(
-			key.WithKeys("r"),
-			key.WithHelp("r", "resume"),
+			key.WithKeys("p"),
+			key.WithHelp("p", "resume"),
+		),
+		progress: key.NewBinding(
+			key.WithKeys("v"),
+			key.WithHelp("v", "progress"),
 		),
 		reset: key.NewBinding(
 			key.WithKeys("r"),
