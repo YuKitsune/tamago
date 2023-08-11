@@ -224,14 +224,16 @@ func (m *model) progressView() string {
 		BorderBottom(true).
 		MarginRight(2).
 		Render("Phases"))
+
+	// Phases
 	for i, phase := range m.plan.Phases {
-		phaseType := phase.Phase.PhaseType.String()
-		if phase.Completed {
+		phaseType := phase.PhaseType.String()
+		if m.plan.IsCompleted(phase) {
 			phaseStrings = append(phaseStrings, checkMark+lipgloss.NewStyle().
 				Strikethrough(true).
 				Foreground(lipgloss.Color("8")).
 				Render(phaseType))
-		} else if i == 0 || m.plan.Phases[i-1].Completed {
+		} else if i == 0 || m.plan.IsCompleted(m.plan.Phases[i-1]) {
 			phaseStrings = append(phaseStrings, dot+phaseType)
 		} else {
 			phaseStrings = append(phaseStrings, lipgloss.NewStyle().

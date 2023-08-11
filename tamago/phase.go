@@ -82,7 +82,7 @@ func NextPhase(currentPhase *Phase, cfg config.Config) *Phase {
 
 		nextCycleNumber := currentPhase.CycleNumber + 1
 		if nextCycleNumber >= cfg.TotalCycles() {
-			return &Phase{PhaseType: Completed}
+			return &Phase{PhaseType: Completed, PhaseNumber: nextPhaseNumber, CycleNumber: currentPhase.CycleNumber}
 		}
 
 		return &Phase{

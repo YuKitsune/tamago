@@ -2,33 +2,23 @@ package tamago
 
 import "github.com/yukitsune/tamago/config"
 
-type PhasePlanEntry struct {
-	Phase     *Phase
-	Completed bool
-}
-
 type PhasePlan struct {
-	Phases       []PhasePlanEntry
+	Phases       []Phase
 	currentIndex int
 }
 
 func BuildPlan(cfg config.Config) *PhasePlan {
 
-	phases := []PhasePlanEntry{
-		{
-			Phase:     InitialPhase(),
-			Completed: false,
-		},
+	phases := []Phase{
+		*InitialPhase(),
 	}
 
 	i := 0
 	for {
+		// Todo: Migrate NextPhase into this method
 		previousPhase := phases[len(phases)-1]
-		nextPhase := NextPhase(previousPhase.Phase, cfg)
-		phases = append(phases, PhasePlanEntry{
-			Phase:     nextPhase,
-			Completed: false,
-		})
+		nextPhase := NextPhase(&previousPhase, cfg)
+		phases = append(phases, *nextPhase)
 
 		if nextPhase.PhaseType == Completed {
 			break
@@ -47,11 +37,20 @@ func BuildPlan(cfg config.Config) *PhasePlan {
 }
 
 func (p *PhasePlan) CurrentPhase() *Phase {
-	return p.Phases[p.currentIndex].Phase
+	return &p.Phases[p.currentIndex]
 }
 
 func (p *PhasePlan) AdvancePhase() *Phase {
-	p.Phases[p.currentIndex].Completed = true
 	p.currentIndex++
 	return p.CurrentPhase()
+}
+
+func (p *PhasePlan) IsCompleted(phase Phase) bool {
+	for i, p1 := range p.Phases {
+		if p1.PhaseNumber == phase.PhaseNumber && p1.CycleNumber == phase.CycleNumber {
+			return i < p.currentIndex
+		}
+	}
+
+	return false
 }
