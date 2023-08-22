@@ -12,6 +12,8 @@
 [![PkgGoDev](https://pkg.go.dev/badge/mod/github.com/yukitsune/tamago)](https://pkg.go.dev/mod/github.com/yukitsune/tamago)
 </h3>
 
+![Example](./example.gif)
+
 # Contributing
 
 Contributions are what make the open source community such an amazing place to be, learn, inspire, and create.
