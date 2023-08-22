@@ -17,8 +17,6 @@ import (
 )
 
 // Todo:
-//  - Acknowledgement: Seek user acknowledgment when phase changes
-//  - Flash when phase changes
 //  - Completion hooks
 //  - Progress bar for current phase
 //  - Pretty colours
@@ -101,6 +99,7 @@ func run(_ *cobra.Command, _ []string) error {
 		help:   help.New(),
 	}
 
+	m.keymap.acknowledge.SetEnabled(false)
 	m.keymap.resume.SetEnabled(false)
 
 	_, err := tea.NewProgram(m).Run()
@@ -112,6 +111,7 @@ func printPlan(plan *tamago.PhasePlan, cfg config.Config) error {
 	list := lipgloss.NewStyle().MarginRight(2)
 	var phaseStrings []string
 
+	// To help out with formatting, we need to know the size of the headers
 	cycleWidth := len("cycle")
 	phaseWidth := len("Short Break") // Longest string
 	durationWidth := len("99m59s")
@@ -130,7 +130,6 @@ func printPlan(plan *tamago.PhasePlan, cfg config.Config) error {
 
 	// Phases
 	for _, phase := range plan.Phases {
-
 		cycleString := fitToWidth(strconv.Itoa(phase.CycleNumber), cycleWidth)
 		phaseString := fitToWidth(phase.PhaseType.String(), phaseWidth)
 		durationString := fitToWidth(phase.Timeout(cfg).String(), durationWidth)
@@ -149,22 +148,52 @@ func printPlan(plan *tamago.PhasePlan, cfg config.Config) error {
 }
 
 type model struct {
-	cfg          config.Config
-	plan         *tamago.PhasePlan
-	timer        timer.Model
-	keymap       keymap
-	help         help.Model
-	quitting     bool
-	showProgress bool
+	cfg                     config.Config
+	plan                    *tamago.PhasePlan
+	timer                   timer.Model
+	keymap                  keymap
+	help                    help.Model
+	acknowledgementRequired bool
+	acknowledgementLightOn  bool
+	acknowledgementTimer    timer.Model
+	showProgress            bool
+	quitting                bool
 }
 
-func (m *model) AdvancePhase() *tamago.Phase {
+func (m *model) AdvancePhase(requireAcknowledgement bool) (tea.Cmd, *tamago.Phase) {
 	nextPhase := m.plan.AdvancePhase()
 	if nextPhase.PhaseType == tamago.Completed {
 		m.quitting = true
 	}
-	m.timer.Timeout = nextPhase.Timeout(m.cfg)
-	return nextPhase
+
+	timeout := nextPhase.Timeout(m.cfg)
+	m.timer.Timeout = timeout
+	var cmd tea.Cmd
+	if requireAcknowledgement {
+		cmd = m.SeekAcknowledgement(timeout)
+	}
+
+	return cmd, nextPhase
+}
+
+func (m *model) SeekAcknowledgement(timeout time.Duration) tea.Cmd {
+	m.acknowledgementTimer = timer.NewWithInterval(timeout, time.Second)
+	m.acknowledgementTimer.Start()
+	m.acknowledgementRequired = true
+	m.acknowledgementLightOn = true
+	m.keymap.acknowledge.SetEnabled(true)
+	return m.acknowledgementTimer.Init()
+}
+
+func (m *model) FlashAcknowledgementLight() {
+	m.acknowledgementLightOn = !m.acknowledgementLightOn
+}
+
+func (m *model) Acknowledge() {
+	m.acknowledgementTimer.Stop()
+	m.acknowledgementRequired = false
+	m.acknowledgementLightOn = false
+	m.keymap.acknowledge.SetEnabled(false)
 }
 
 func (m *model) Init() tea.Cmd {
@@ -174,29 +203,57 @@ func (m *model) Init() tea.Cmd {
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case timer.TickMsg:
+
 		var cmd tea.Cmd
-		m.timer, cmd = m.timer.Update(msg)
+		if msg.ID == m.timer.ID() {
+			m.timer, cmd = m.timer.Update(msg)
+		}
+
+		if m.acknowledgementRequired && msg.ID == m.acknowledgementTimer.ID() {
+			m.acknowledgementTimer, cmd = m.acknowledgementTimer.Update(msg)
+			m.FlashAcknowledgementLight()
+		}
 		return m, cmd
 
 	case timer.StartStopMsg:
 		var cmd tea.Cmd
-		m.timer, cmd = m.timer.Update(msg)
-		m.keymap.pause.SetEnabled(m.timer.Running())
-		m.keymap.resume.SetEnabled(!m.timer.Running())
+		if msg.ID == m.timer.ID() {
+			m.timer, cmd = m.timer.Update(msg)
+			m.keymap.pause.SetEnabled(m.timer.Running())
+			m.keymap.resume.SetEnabled(!m.timer.Running())
+		}
+
+		if msg.ID == m.acknowledgementTimer.ID() {
+			m.acknowledgementTimer, cmd = m.acknowledgementTimer.Update(msg)
+		}
 		return m, cmd
 
 	case timer.TimeoutMsg:
-		if m.plan.CurrentPhase().PhaseType == tamago.Completed {
-			return m, tea.Quit
+
+		if msg.ID == m.timer.ID() {
+
+			if m.plan.CurrentPhase().PhaseType == tamago.Completed {
+				return m, tea.Quit
+			}
+
+			cmd, newPhase := m.AdvancePhase(true)
+			if newPhase.PhaseType == tamago.Completed {
+				return m, tea.Quit
+			}
+
+			return m, cmd
 		}
 
-		newPhase := m.AdvancePhase()
-		if newPhase.PhaseType == tamago.Completed {
-			return m, tea.Quit
+		if msg.ID == m.acknowledgementTimer.ID() {
+			m.Acknowledge()
+			return m, nil
 		}
 
 	case tea.KeyMsg:
 		switch {
+		case key.Matches(msg, m.keymap.acknowledge):
+			m.Acknowledge()
+			return m, nil
 		case key.Matches(msg, m.keymap.pause, m.keymap.resume):
 			return m, m.timer.Toggle()
 		case key.Matches(msg, m.keymap.progress):
@@ -205,12 +262,14 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, m.keymap.reset):
 			m.timer.Timeout = m.plan.CurrentPhase().Timeout(m.cfg)
 		case key.Matches(msg, m.keymap.skip):
-			nextPhase := m.AdvancePhase()
+
+			// If the user is intentionally skipping this phase, then they don't need to acknowledge the phase change
+			cmd, nextPhase := m.AdvancePhase(false)
 			if nextPhase.PhaseType == tamago.Completed {
 				m.quitting = true
 				return m, tea.Quit
 			}
-			return m, nil
+			return m, cmd
 		case key.Matches(msg, m.keymap.quit):
 			m.quitting = true
 			return m, tea.Quit
@@ -222,10 +281,17 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *model) View() string {
 
+	withAcknowledgementLightOn := func(str string) string {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Render(str)
+	}
+
 	// Current phase and time remaining
 	currentPhase := m.plan.CurrentPhase()
 	phaseType := currentPhase.PhaseType
 	s := fmt.Sprintf("%s %s: %s", phaseType.Emoji(), phaseType.String(), m.timer.Timeout)
+	if m.acknowledgementRequired && m.acknowledgementLightOn {
+		s = withAcknowledgementLightOn(s)
+	}
 
 	// Paused indicator
 	if !m.timer.Running() {
@@ -300,6 +366,7 @@ func (m *model) progressView() string {
 
 func (m *model) helpView() string {
 	return "\n" + m.help.ShortHelpView([]key.Binding{
+		m.keymap.acknowledge,
 		m.keymap.pause,
 		m.keymap.resume,
 		m.keymap.progress,
@@ -310,16 +377,21 @@ func (m *model) helpView() string {
 }
 
 type keymap struct {
-	pause    key.Binding
-	resume   key.Binding
-	progress key.Binding
-	reset    key.Binding
-	skip     key.Binding
-	quit     key.Binding
+	acknowledge key.Binding
+	pause       key.Binding
+	resume      key.Binding
+	progress    key.Binding
+	reset       key.Binding
+	skip        key.Binding
+	quit        key.Binding
 }
 
 func newKeymap() keymap {
 	return keymap{
+		acknowledge: key.NewBinding(
+			key.WithKeys("a"),
+			key.WithHelp("a", "acknowledge"),
+		),
 		pause: key.NewBinding(
 			key.WithKeys("p"),
 			key.WithHelp("p", "pause"),
