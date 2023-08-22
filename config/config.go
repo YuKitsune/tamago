@@ -5,6 +5,7 @@ import (
 )
 
 type Config interface {
+	DryRun() bool
 	WorkDuration() time.Duration
 	ShortBreakDuration() time.Duration
 	LongBreakDuration() time.Duration
@@ -13,6 +14,7 @@ type Config interface {
 }
 
 const (
+	DryRunKey             = "dry-run"
 	WorkDurationKey       = "work-duration"
 	ShortBreakDurationKey = "short-break-duration"
 	LongBreakDurationKey  = "long-break-duration"

@@ -3,11 +3,16 @@ package config
 import "time"
 
 type stubConfig struct {
+	dryRun             bool
 	workDuration       time.Duration
 	shortBreakDuration time.Duration
 	longBreakDuration  time.Duration
 	phasesPerCycle     int
 	totalCycles        int
+}
+
+func (c *stubConfig) DryRun() bool {
+	return c.dryRun
 }
 
 func (c *stubConfig) WorkDuration() time.Duration {

@@ -12,11 +12,11 @@ import (
 	"github.com/yukitsune/tamago/config"
 	"github.com/yukitsune/tamago/tamago"
 	"log"
+	"strconv"
 	"time"
 )
 
 // Todo:
-//  - Dry-run: List phases, cycles, and local start/end times
 //  - Acknowledgement: Seek user acknowledgment when phase changes
 //  - Flash when phase changes
 //  - Completion hooks
@@ -51,6 +51,11 @@ func main() {
 }
 
 func configureFlags(cmd *cobra.Command) error {
+	cmd.PersistentFlags().Bool(config.DryRunKey, false, "Prints the planned phases")
+	if err := viper.BindPFlag(config.DryRunKey, cmd.PersistentFlags().Lookup(config.DryRunKey)); err != nil {
+		return err
+	}
+
 	cmd.PersistentFlags().DurationP(config.WorkDurationKey, "w", 25*time.Minute, "The duration of a work phase. Valid time units are \"ns\", \"us\" (or \"µs\"), \"ms\", \"s\", \"m\", \"h\"")
 	if err := viper.BindPFlag(config.WorkDurationKey, cmd.PersistentFlags().Lookup(config.WorkDurationKey)); err != nil {
 		return err
@@ -84,6 +89,9 @@ func run(_ *cobra.Command, _ []string) error {
 	cfg := config.NewViperConfig(viper.GetViper())
 
 	phasePlan := tamago.BuildPlan(cfg)
+	if cfg.DryRun() {
+		return printPlan(phasePlan, cfg)
+	}
 
 	m := &model{
 		cfg:    cfg,
@@ -96,6 +104,47 @@ func run(_ *cobra.Command, _ []string) error {
 	m.keymap.resume.SetEnabled(false)
 
 	_, err := tea.NewProgram(m).Run()
+	return err
+}
+
+func printPlan(plan *tamago.PhasePlan, cfg config.Config) error {
+
+	list := lipgloss.NewStyle().MarginRight(2)
+	var phaseStrings []string
+
+	cycleWidth := len("cycle")
+	phaseWidth := len("Short Break") // Longest string
+	durationWidth := len("99m59s")
+
+	fitToWidth := func(str string, width int) string {
+		return lipgloss.NewStyle().PaddingRight(width - len(str)).Render(str)
+	}
+
+	// Header
+	phaseStrings = append(phaseStrings, lipgloss.NewStyle().
+		Bold(true).
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderBottom(true).
+		MarginRight(2).
+		Render(fitToWidth("Cycle", cycleWidth), fitToWidth("Phase", phaseWidth), fitToWidth("Duration", durationWidth)))
+
+	// Phases
+	for _, phase := range plan.Phases {
+
+		cycleString := fitToWidth(strconv.Itoa(phase.CycleNumber), cycleWidth)
+		phaseString := fitToWidth(phase.PhaseType.String(), phaseWidth)
+		durationString := fitToWidth(phase.Timeout(cfg).String(), durationWidth)
+
+		phaseStrings = append(phaseStrings, lipgloss.NewStyle().Render(cycleString, phaseString, durationString))
+	}
+
+	listString := list.Render(
+		lipgloss.JoinVertical(lipgloss.Left,
+			phaseStrings...,
+		),
+	)
+
+	_, err := fmt.Printf(listString)
 	return err
 }
 

@@ -13,6 +13,10 @@ func NewViperConfig(viper *viper.Viper) Config {
 	return &viperConfig{viper}
 }
 
+func (c *viperConfig) DryRun() bool {
+	return c.viper.GetBool(DryRunKey)
+}
+
 func (c *viperConfig) WorkDuration() time.Duration {
 	return c.viper.GetDuration(WorkDurationKey)
 }
